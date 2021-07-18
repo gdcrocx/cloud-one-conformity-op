@@ -62,29 +62,22 @@ def main():
     
     supportedFileExtensions = ["json", "yaml", "yml"]
 
-    ccApiKey = prompt.secret(
-        name="CC_API_KEY",
-        message="Please provide the Cloud One Conformity API Token you want to use?",
-        flag="k"
-    )    
+    # ccApiKey = prompt.secret(
+    #     name="CC_API_KEY",
+    #     message="Please provide the Cloud One Conformity API Token you want to use?",
+    #     flag="k"
+    # ) 
+
+    ccApiKey = sdk.get_secret('CC_API_KEY')
 
     ux.spinner_start(text="Processing...")    
 
     filePath = None
-    for (dirpath, dirnames, filenames) in walk('/ops'):       
-        sdk.log(str(dirnames))
-        sdk.log(str(filenames))
-        status = stat(filenames[0])
-        sdk.log(str(status))
-        sdk.log("File permission mask (in octal):" + str(oct(status.st_mode)[-3:]))
-        break
 
-    for (dirpath, dirnames, filenames) in walk('/ops/cloudformation'):        
+    for (dirpath, dirnames, filenames) in walk('/tmp/cloudformation'):        
         sdk.log(str(filenames))
         filePath = dirpath + "/" + filenames[0]
-        sdk.log(filePath)
-        status = stat(filePath)
-        sdk.log("File permission mask (in octal):" + str(oct(status.st_mode)[-3:]))
+        sdk.log(filePath)     
         break
     
     if ccApiKey != "" and filePath.split(".")[-1].lower() in supportedFileExtensions:        

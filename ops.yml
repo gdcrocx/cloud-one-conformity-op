@@ -1,0 +1,10 @@
+# for more info visit https://cto.ai/docs
+version: "1"
+commands:
+  - name: cloud-one-conformity-pipeline-scanner:0.1.20
+    description: Scan CloudFormation files with Cloud One Conformity Pipeline Scanner
+    # remote: false
+    public: true
+    sdk: 2
+    sourceCodeURL: https://github.com/gdcrocx/cloud-one-conformity-op.git    
+    run: python3 /ops/main.py

@@ -1,0 +1,452 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Transform": "AWS::Serverless-2016-10-31",
+    "Description": "Misconfigured AWS CloudFormation Template for Cloud Conformity **WARNING** This template creates AWS Resources in the AWS US-EAST-1 Region. You will be billed for the AWS resources used if you create a stack from this template. Please delete this CloudFormation Stack when no longer in use. For cost and billing purposes, all resources are tagged with Project=TrendMicro tags. Use AWS Resource Groups' tag filter to identify created resources.",
+    "Parameters": {
+        "VpcId": {
+            "Type": "AWS::EC2::VPC::Id",
+            "Description": "VpcId of your existing Virtual Private Cloud (VPC)",
+            "ConstraintDescription": "must be the VPC Id of an existing Virtual Private Cloud."
+        },
+        "SubnetId": {
+            "Type": "AWS::EC2::Subnet::Id",
+            "Description": "SubnetId of an existing subnet (for the primary network) in your Virtual Private Cloud (VPC)",
+            "ConstraintDescription": "must be an existing subnet in the selected Virtual Private Cloud."
+        },
+        "C1WSApiSecretKey": {
+            "Type": "String",
+            "Description": "Cloud One Workload Security API Secret Key. To create an API key, refer https://cloudone.trendmicro.com/docs/workload-security/api-send-request/#create-an-api-key",
+            "ConstraintDescription": "must be a valid Cloud One Workload Security API Secret."
+        }
+    },
+    "Resources": {
+        "C1WSSnsTopic": {
+            "Type": "AWS::SNS::Topic",
+            "Properties": {
+                "DisplayName": "CloudOneWorkloadSecuritySnsTopic",
+                "TopicName": "CloudOneWorkloadSecuritySnsTopic",
+                "KmsMasterKeyId": {
+                    "Fn::Join" : [ 
+                        "", [ 
+                            "arn:aws:kms:",
+                            { "Ref" : "AWS::Region" },
+                            ":",
+                            { "Ref" : "AWS::AccountId" },
+                            ":alias/aws/sns"
+                        ] 
+                    ]
+                },
+                "Tags": [
+                    {
+                        "Key": "Owner",
+                        "Value": "TrendMicro"
+                    },
+                    {
+                        "Key": "Product",
+                        "Value": "CloudOneWorkloadSecurity"
+                    },
+                    {
+                        "Key": "Name",
+                        "Value": "CloudOneWorkloadSecuritySnsTopic"
+                    }
+                ]
+            }
+        },
+        "C1WSEventsS3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "VersioningConfiguration": {
+                    "Status": "Suspended"
+                },
+                "AccessControl": "Private",
+                "CorsConfiguration": {
+                    "CorsRules": [
+                        {
+                            "AllowedHeaders": [
+                                "*"
+                            ],
+                            "AllowedMethods": [
+                                "POST",
+                                "GET",
+                                "PUT",
+                                "DELETE",
+                                "HEAD"
+                            ],
+                            "AllowedOrigins": [
+                                "*"
+                            ]
+                        }
+                    ]
+                },
+                "BucketEncryption": {
+                    "ServerSideEncryptionConfiguration": [
+                        {
+                            "ServerSideEncryptionByDefault": {
+                                "SSEAlgorithm": "AES256"
+                            }
+                        }
+                    ]
+                },
+                "Tags": [
+                    {
+                        "Key": "Owner",
+                        "Value": "TrendMicro"
+                    },
+                    {
+                        "Key": "Product",
+                        "Value": "CloudOneWorkloadSecurity"
+                    },
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Sub": "cloudoneworkloadsecurity-sns-events-bucket"
+                        }
+                    }
+                ]
+            }
+        },
+        "C1WSEventsS3BucketPolicy": {
+            "Type" : "AWS::S3::BucketPolicy",
+            "Properties" : {
+                "Bucket" : {
+                    "Ref": "C1WSEventsS3Bucket"
+                },
+                "PolicyDocument" : {
+                    "Id": "C1WSEventsS3BucketPolicy-EnforceSSL",
+                    "Version": "2012-10-17",
+                    "Statement": [
+                      {
+                        "Sid": "AllowSSLRequestsOnly",
+                        "Action": "s3:*",
+                        "Effect": "Deny",
+                        "Resource": [
+                            {
+                                "Fn::GetAtt": [
+                                    "C1WSEventsS3Bucket",
+                                    "Arn"
+                                ]
+                            },
+                            {
+                                "Fn::Join": [
+                                    "",
+                                    [
+                                        {
+                                            "Fn::GetAtt": [
+                                                "C1WSEventsS3Bucket",
+                                                "Arn"
+                                            ]
+                                        },
+                                        "/*"
+                                    ]
+                                ]
+                            }
+                        ],
+                        "Condition": {
+                          "Bool": {
+                            "aws:SecureTransport": "false"
+                          }
+                        },
+                        "Principal": "*"
+                      }
+                    ]
+                  }
+            }
+        },
+        "C1WSAPIUserSnsPolicy": {
+            "Type": "AWS::IAM::Policy",
+            "Properties": {
+                "PolicyName": "CloudOneWorkloadSecurityEvent-Sns-Policy",
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Action": [
+                                "sns:Publish"
+                            ],
+                            "Effect": "Allow",
+                            "Resource": {
+                                "Ref": "C1WSSnsTopic"
+                            }
+                        },
+                        {
+                            "Action": [
+                                "kms:Decrypt",
+                                "kms:DescribeKey",
+                                "kms:Encrypt",
+                                "kms:GenerateDataKey*",
+                                "kms:ReEncrypt*"
+                            ],
+                            "Effect": "Allow",
+                            "Resource": {
+                                "Fn::Join" : [ 
+                                    "", [ 
+                                        "arn:aws:kms:",
+                                        { "Ref" : "AWS::Region" },
+                                        ":",
+                                        { "Ref" : "AWS::AccountId" },
+                                        ":alias/aws/sns"
+                                    ] 
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "Users": [
+                    {
+                        "Ref": "C1WSAPIUser"
+                    }
+                ]
+            }
+        },
+        "C1WSLambdaRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "ManagedPolicyArns": [
+                    "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+                ],
+                "Description": "Workload Security S3 Lambda IAM Role",
+                "Path": "/",
+                "RoleName": "CloudOneWorkloadSecurityLambdaRole",
+                "Tags": [
+                    {
+                        "Key": "Owner",
+                        "Value": "TrendMicro"
+                    },
+                    {
+                        "Key": "Product",
+                        "Value": "CloudOneWorkloadSecurity"
+                    },
+                    {
+                        "Key": "Name",
+                        "Value": "CloudOneWorkloadSecurityLambdaRole"
+                    }
+                ]
+            }
+        },
+        "C1WSS3LambdaPolicy": {
+            "Type": "AWS::IAM::Policy",
+            "Properties": {
+                "PolicyName": "CloudOneWorkloadSecurityEvent-S3-Policy",
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "s3:PutObject",
+                                "s3:PutObjectAcl"
+                            ],
+                            "Resource": [
+                                {
+                                    "Fn::GetAtt": [
+                                        "C1WSEventsS3Bucket",
+                                        "Arn"
+                                    ]
+                                },
+                                {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            {
+                                                "Fn::GetAtt": [
+                                                    "C1WSEventsS3Bucket",
+                                                    "Arn"
+                                                ]
+                                            },
+                                            "/*"
+                                        ]
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                "Roles": [
+                    {
+                        "Ref": "C1WSLambdaRole"
+                    }
+                ]
+            }
+        },
+        "C1WSAPIUser": {
+            "Type": "AWS::IAM::User",
+            "Properties": {
+                "Path": "/",
+                "Tags": [
+                    {
+                        "Key": "Owner",
+                        "Value": "TrendMicro"
+                    },
+                    {
+                        "Key": "Product",
+                        "Value": "CloudOneWorkloadSecurity"
+                    },
+                    {
+                        "Key": "Name",
+                        "Value": "CloudOneWorkloadSecurityAPIUser"
+                    }
+                ],
+                "UserName": "CloudOneWorkloadSecurityAPIUser"
+            }
+        },
+        "C1WSAPIUserIAMAccessKey": {
+            "Type": "AWS::IAM::AccessKey",
+            "Properties": {
+                "Status": "Active",
+                "UserName": {
+                    "Ref": "C1WSAPIUser"
+                }
+            }
+        },
+        "C1WSLambdaSnsS3Writer": {
+            "Type": "AWS::Serverless::Function",
+            "Properties": {
+                "Description": "Trend Micro Cloud One Workload Security lambda function to read Workload Security SIEM Events from the designated SNS topic and write to the designated S3 Bucket. Refer tags for the SNS Topic and S3 Bucket information.",
+                "FunctionName": "CloudOneWorkloadSecurityLambdaSnsS3Writer",
+                "Handler": "index.lambda_handler",
+                "Timeout": 5,
+                "Role": {
+                    "Fn::GetAtt": [
+                        "C1WSLambdaRole",
+                        "Arn"
+                    ]
+                },
+                "Runtime": "nodejs12.x",
+                "InlineCode": {
+                    "Fn::Sub": [
+                        "var aws = require('aws-sdk');\nvar s3 = new aws.S3({apiVersion: '2006-03-01'});\nvar bucket = '${S3_BUCKET_NAME}';  var acl = 'public-read';\nvar s3prefix = 'DeepSecurityEvents/';\nvar ext = '.json';\n\nexports.lambda_handler = (sns, context) => {\n//retrieve the events from the sns json\nvar events = sns.Records[0].Sns.Message;\n//extract the date to use in s3 directory\nvar timestamp = sns.Records[0].Sns.Timestamp;\nvar date = getFormattedDate(new Date(timestamp));\n\n//add 5 random digits to prevent overwriting an existing file if two messages are received at the same ms i.e. DeepSecurityEvents/2016/07/20/2016-07-20T15:30:00.000Z12345.json\nvar random5digits = Math.floor(Math.random()*90000) + 10000;\n\nvar filename = s3prefix + date + '/' + timestamp + random5digits + ext;\nsendToS3(events, filename);\n};\n\nfunction getFormattedDate(d) {\n//returns yyyy/MM/dd\nreturn d.getFullYear() + '/' + twoDigits(d.getMonth() + 1) + '/' + twoDigits(d.getDate());\n}\n\nfunction twoDigits(n) {\nreturn n < 10 ? '0' + n : n;\n}\n\nfunction sendToS3(content, filename) {\nvar params = {\nBucket: bucket,\nKey: filename,\nACL: acl,\nBody: content\n};\ns3.putObject(params, function(err) {\nif (err) console.log(err, err.stack); // an error occurred\n});\n}",
+                        {
+                            "S3_BUCKET_NAME": {
+                                "Ref": "C1WSEventsS3Bucket"
+                            }
+                        }
+                    ]
+                },
+                "Events": {
+                    "SnsTriggerEvent": {
+                        "Type": "SNS",
+                        "Properties": {
+                            "Topic": {
+                                "Ref": "C1WSSnsTopic"
+                            }
+                        }
+                    }
+                },
+                "Tags": {
+                    "Owner": "TrendMicro",
+                    "Product": "CloudOneWorkloadSecurity",
+                    "Name": "CloudOneWorkloadSecurityLambdaSnsS3Writer",
+                    "SnsTopicArn": {
+                        "Ref": "C1WSSnsTopic"
+                    },
+                    "S3BucketArn": {
+                        "Fn::GetAtt": [
+                            "C1WSEventsS3Bucket",
+                            "Arn"
+                        ]
+                    }
+                }
+            }
+        },
+        "C1WSConfigureSIEMLambdaFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Description": "Trend Micro Cloud One Workload Security lambda function to configure Workload Security SIEM using REST APIs",
+                "Handler": "index.lambda_handler",
+                "Timeout": 5,
+                "Role": {
+                    "Fn::GetAtt": [
+                        "C1WSLambdaRole",
+                        "Arn"
+                    ]
+                },
+                "Runtime": "python3.6",
+                "Code": {
+                    "ZipFile": "import cfnresponse\nimport urllib3\nimport json\n\ndef callCloudOneWorkloadSecurityApi(c1wsSecret, configKey, configValue):\n\tbaseUrl = 'https:\/\/app.deepsecurity.trendmicro.com\/api\/systemsettings\/'\n\turl = baseUrl + configKey\n\thttpBody = json.dumps({ \"value\": configValue })\n\thttp = urllib3.PoolManager()\n\theader = { 'Content-Type': 'application/json', 'Content-Length': str(len(httpBody)), 'Host': 'app.deepsecurity.trendmicro.com', 'api-version': 'v1', 'api-secret-key': c1wsSecret }\n\tx = http.request('POST', url, headers=header, body=httpBody)\n\treturn str(x.data)\n\ndef lambda_handler(event, context):\n\tprint(f\"Data in event: {event}\")\n\tresponse_data = \"\"\n\tresponseObj = {}\n\tif event[\"RequestType\"] == \"Create\" or event[\"RequestType\"] == \"Update\":\n\t\taws_sns_topic = str(event[\"ResourceProperties\"][\"C1WSSnsTopicArn\"])\n\t\tc1wsAwsIamUserAccesskey = str(event[\"ResourceProperties\"][\"C1WSAPIUserAccessKey\"])\n\t\tc1wsAwsIamUserSecretkey = str(event[\"ResourceProperties\"][\"C1WSAPIUserAccessSecret\"])\n\t\tc1wsApiSecretKey = str(event[\"ResourceProperties\"][\"C1WSApiSecretKey\"])\n\t\tc1wsSnsEventForwardingConfigJson = '{ \"platformSettingEventForwardingSnsAdvancedConfigEnabled\": \"false\", \"platformSettingEventForwardingSnsEnabled\": \"true\", \"platformSettingEventForwardingSnsConfigJson\": { \"Version\": \"2014-09-24\", \"Statement\": [ { \"Topic\": \"\", \"Condition\": { \"StringEquals\": { \"EventType\": [ \"SystemEvent\", \"AntiMalwareEvent\", \"WebReputationEvent\", \"AppControlEvent\", \"IntegrityEvent\", \"LogInspectionEvent\", \"PacketLog\", \"PayloadLog\" ] } } } ] }, \"platformSettingEventForwardingSnsSecretKey\": \"\", \"platformSettingEventForwardingSnsAccessKey\": \"\" }'\n\t\tc1wsSnsEventForwardingConfigDict = json.loads(c1wsSnsEventForwardingConfigJson)\n\t\tc1wsSnsEventForwardingConfigDict[\"platformSettingEventForwardingSnsConfigJson\"][\"Statement\"][0][\"Topic\"] = aws_sns_topic\n\t\tc1wsSnsEventForwardingConfigDict[\"platformSettingEventForwardingSnsSecretKey\"] = c1wsAwsIamUserSecretkey\n\t\tc1wsSnsEventForwardingConfigDict[\"platformSettingEventForwardingSnsAccessKey\"] = c1wsAwsIamUserAccesskey\n\n\t\tfor item in c1wsSnsEventForwardingConfigDict:\n\t\t\tresponse = \"\"\n\t\t\tresponse = callCloudOneWorkloadSecurityApi(c1wsApiSecretKey, str(item), str(c1wsSnsEventForwardingConfigDict[item]))\n\t\t\tresponse_data += response\n\t\t\tresponseObj = { \"Output\": response_data }\n\n\tcfnresponse.send(event, context, cfnresponse.SUCCESS, responseObj)"
+                },
+                "Tags": [
+                    {
+                        "Key": "Owner",
+                        "Value": "TrendMicro"
+                    },
+                    {
+                        "Key": "Product",
+                        "Value": "CloudOneWorkloadSecurity"
+                    },
+                    {
+                        "Key": "Name",
+                        "Value": "CloudOneWorkloadSecurityLambdaConfigureSnsEventForwarding"
+                    }
+                ]
+            }
+        },
+        "CloudOneWorkloadSecurityConfigResource": {
+            "Type": "Custom::CloudOneWorkloadSecurityConfigResource",
+            "Properties": {
+                "ServiceToken": {
+                    "Fn::GetAtt": [
+                        "C1WSConfigureSIEMLambdaFunction",
+                        "Arn"
+                    ]
+                },
+                "C1WSSnsTopicArn": {
+                    "Ref": "C1WSSnsTopic"
+                },
+                "C1WSAPIUserAccessSecret": {
+                    "Fn::GetAtt": [
+                        "C1WSAPIUserIAMAccessKey",
+                        "SecretAccessKey"
+                    ]
+                },
+                "C1WSAPIUserAccessKey": {
+                    "Ref": "C1WSAPIUserIAMAccessKey"
+                },
+                "C1WSApiSecretKey": {
+                    "Ref": "C1WSApiSecretKey"
+                }
+            }
+        }
+    },
+    "Outputs": {
+        "C1WSSnsTopicArn": {
+            "Description": "SNS Topic ARN for Trend Micro Cloud One Workload Security",
+            "Value": {
+                "Ref": "C1WSSnsTopic"
+            }
+        },
+        "C1WSEventsS3BucketArn": {
+            "Value": {
+                "Fn::GetAtt": [
+                    "C1WSEventsS3Bucket",
+                    "Arn"
+                ]
+            },
+            "Description": "Bucket Name of the newly created S3 Bucket for Trend Micro Cloud One Workload Security"
+        },
+        "C1WSLambdaSnsS3Writer": {
+            "Description": "Lambda Function ARN for Trend Micro Cloud One Workload Security",
+            "Value": {
+                "Fn::GetAtt": [
+                    "C1WSLambdaSnsS3Writer",
+                    "Arn"
+                ]
+            }
+        }
+    }
+}
